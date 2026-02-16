@@ -1,3 +1,9 @@
 # MDM2_Project2
 
-hello
+## Requirements
+
+Python, using `uv` for virtual environment management.
+
+## Running
+
+Do `uv run main.py`
