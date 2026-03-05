@@ -24,11 +24,6 @@ def rand_points(width, height, num):
     y = np.random.uniform(height[0], height[1], size=num)
     return np.column_stack((x, y))
 
-def rand_points(width, height, num):
-    x = np.random.uniform(width[0], width[1], size=num)
-    y = np.random.uniform(height[0], height[1], size=num)
-    return np.column_stack((x, y))
-
 
 # simple Euler step moving particles with local velocity
 def advect_points(points, t, dt=0.01):
