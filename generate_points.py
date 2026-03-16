@@ -15,6 +15,7 @@ def rand_points(width, height, num):
 
 def grid_points(width, height, num):
     # create initial square grid of points
+    num = int(np.sqrt(num)) 
     x = np.linspace(width[0], width[1], num)
     y = np.linspace(height[0], height[1], num)
     X, Y = np.meshgrid(x, y)
@@ -26,6 +27,12 @@ def new_points(points, t, dt):
     points[:, 0] += u_p * dt
     points[:, 1] += w_p * dt
     return points
+
+# shuffle from stackoverflow
+def shuffle_along_axis(a, axis):
+    idx = np.random.rand(*a.shape).argsort(axis=axis)
+    return np.take_along_axis(a,idx,axis=axis)
+
 
 def generate_points(width: tuple, # width is a tuple of (min, max) for x values
                     height: tuple, # height is a tuple of (min, max) for y values
@@ -44,7 +51,7 @@ def generate_points(width: tuple, # width is a tuple of (min, max) for x values
             points = rand_points(width, height, num_points)
         case 'grid':
             points = grid_points(width, height, num_points)
-
+            
     x_vals = points[:, 0]
     y_vals = points[:, 1]
 
@@ -52,6 +59,7 @@ def generate_points(width: tuple, # width is a tuple of (min, max) for x values
 
     for i in range(1, time):
         points = new_points(points, i * dt, dt)
+        points = shuffle_along_axis(points, axis=0)
         x_vals = points[:, 0]
         y_vals = points[:, 1]
         data.append({"x": x_vals.copy(), "y": y_vals.copy()})
