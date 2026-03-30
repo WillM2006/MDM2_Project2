@@ -1,0 +1,4 @@
+# ignore generated artefacts (images, animations, position data)
+*.gif
+*.png
+*.csv
