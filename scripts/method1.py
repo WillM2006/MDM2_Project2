@@ -21,8 +21,17 @@ def calculate_particle_assignments(
     return assignment
 
 
-def run(infile):
+def run(infile, extent: float):
     DIMENSIONS = 2
+
+    corners = np.array(
+        [
+            [-extent / 2, -extent / 2],
+            [-extent / 2, extent / 2],
+            [extent / 2, -extent / 2],
+            [extent / 2, extent / 2],
+        ]
+    )
 
     # Construct CSV reader to get coordinates from input file
     csv_reader = csv.reader(infile)
@@ -30,6 +39,7 @@ def run(infile):
     # Read the first line of the input so the main loop has a 'previous' to compare against
     first_line = next(csv_reader)
     previous_positions = np.array(first_line, np.float32).reshape(DIMENSIONS, -1).T
+    previous_positions = np.concat([corners, previous_positions])
 
     # We also need our initial triangulation
     triangulation = scipy.spatial.Delaunay(previous_positions)
@@ -40,8 +50,8 @@ def run(infile):
 
     # plot simplices
     for simplex in simplices:
-        xs = previous_positions[simplex, 0]
-        ys = previous_positions[simplex, 1]
+        xs = previous_positions[simplex[[0, 1, 2, 0]], 0]
+        ys = previous_positions[simplex[[0, 1, 2, 0]], 1]
         axis.plot(xs, ys, c="grey", zorder=1)
 
     axis.scatter(previous_positions[:, 0], previous_positions[:, 1])
@@ -53,6 +63,7 @@ def run(infile):
     for index, line in enumerate(csv_reader, start=1):
         # Get positions from the CSV input
         positions = np.array(line, np.float32).reshape(DIMENSIONS, -1).T
+        positions = np.concat([corners, positions])
 
         # Determine assignments
         EPSILON = 1.0
@@ -67,8 +78,8 @@ def run(infile):
         simplices = assignments[simplices]
 
         for indices in simplices:
-            xs = positions[indices, 0]
-            ys = positions[indices, 1]
+            xs = positions[indices[[0, 1, 2, 0]], 0]
+            ys = positions[indices[[0, 1, 2, 0]], 1]
             axis.plot(xs, ys, c="grey", zorder=1)
 
         axis.scatter(positions[:, 0], positions[:, 1])
@@ -82,5 +93,6 @@ if __name__ == "__main__":
     from argparse import ArgumentParser
 
     parser = ArgumentParser(description="Particle pairing example")
+    parser.add_argument("--extent", required=True, type=float)
     arguments = parser.parse_args()
-    run(sys.stdin)
+    run(sys.stdin, arguments.extent)
