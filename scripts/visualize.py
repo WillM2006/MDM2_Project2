@@ -20,8 +20,8 @@ def run(filein, outpath: str, fps: int, extent: float):
 
     def animate(_):
         input_line = next(csv_reader)
-        positions = np.array(input_line, dtype=np.float32).reshape(2, -1)
-        scatter.set_offsets(positions.T)
+        positions = np.array(input_line, dtype=np.float32).reshape(2, -1).T
+        scatter.set_offsets(positions)
         return []
 
     try:

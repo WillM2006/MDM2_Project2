@@ -11,7 +11,7 @@ import matplotlib.pyplot as plt
 def calculate_particle_assignments(
     old: np.ndarray, new: np.ndarray, epsilon: float, threshold: float
 ) -> np.ndarray:
-    affinity = graph_matching.SpectralGraphMatchingInfo(old.T, new.T, epsilon)
+    affinity = graph_matching.SpectralGraphMatchingInfo(old, new, epsilon)
 
     while graph_matching.iterate(affinity) > threshold:
         pass
@@ -29,10 +29,10 @@ def run(infile):
 
     # Read the first line of the input so the main loop has a 'previous' to compare against
     first_line = next(csv_reader)
-    previous_positions = np.array(first_line, np.float32).reshape(DIMENSIONS, -1)
+    previous_positions = np.array(first_line, np.float32).reshape(DIMENSIONS, -1).T
 
     # We also need our initial triangulation
-    triangulation = scipy.spatial.Delaunay(previous_positions.T)
+    triangulation = scipy.spatial.Delaunay(previous_positions)
 
     figure, axis = plt.subplots()
 
@@ -40,11 +40,11 @@ def run(infile):
 
     # plot simplices
     for simplex in simplices:
-        xs = previous_positions[0, simplex]
-        ys = previous_positions[1, simplex]
+        xs = previous_positions[simplex, 0]
+        ys = previous_positions[simplex, 1]
         axis.plot(xs, ys, c="grey", zorder=1)
 
-    axis.scatter(previous_positions[0, :], previous_positions[1, :])
+    axis.scatter(previous_positions[:, 0], previous_positions[:, 1])
 
     figure.savefig("figures/0.png")
     plt.close(figure)
@@ -52,7 +52,7 @@ def run(infile):
     # Iterate all the remaining lines in the CSV
     for index, line in enumerate(csv_reader, start=1):
         # Get positions from the CSV input
-        positions = np.array(line, np.float32).reshape(DIMENSIONS, -1)
+        positions = np.array(line, np.float32).reshape(DIMENSIONS, -1).T
 
         # Determine assignments
         EPSILON = 1.0
@@ -67,11 +67,11 @@ def run(infile):
         simplices = assignments[simplices]
 
         for indices in simplices:
-            xs = positions[0, indices]
-            ys = positions[1, indices]
+            xs = positions[indices, 0]
+            ys = positions[indices, 1]
             axis.plot(xs, ys, c="grey", zorder=1)
 
-        axis.scatter(positions[0, :], positions[1, :])
+        axis.scatter(positions[:, 0], positions[:, 1])
         figure.savefig(f"figures/{index}.png")
         plt.close(figure)
 
