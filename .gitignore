@@ -1,6 +1,7 @@
 # ignore generated artefacts (images, animations, position data)
 *.gif
 *.png
+*.svg
 *.csv
 
 # Compiled Python bytecode

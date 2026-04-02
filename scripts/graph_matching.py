@@ -41,7 +41,6 @@ def solution(data: SpectralGraphMatchingInfo) -> np.ndarray:
     """Generate and return a dicretized assignment matrix."""
 
     p = data.p.reshape((data.n1, data.n2))
-    print(p)
 
     discrete = np.zeros(data.n1, dtype=np.int32)
     for i in range(data.n1):

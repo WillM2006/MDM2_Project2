@@ -1,36 +1,20 @@
 #!/bin/env python
 
-import graph_matching
-import scipy.spatial
-import scipy.interpolate
-import numpy as np
 import csv
-import sys
+import graph_matching
 import matplotlib.pyplot as plt
+import numpy as np
+import scipy.spatial
+import sys
+
+DIMENSIONS = 2
+"""Constant number of dimensions, since this code is written for only a 2D slice of a 3D flow."""
 
 
-def calculate_particle_assignments(
-    old: np.ndarray, new: np.ndarray, epsilon: float, threshold: float
-) -> np.ndarray:
-    affinity = graph_matching.SpectralGraphMatchingInfo(old, new, epsilon)
+def generate_corner_points(extent: float) -> np.ndarray:
+    """Generate fixed corner points used to define the domain boundary during processing."""
 
-    while graph_matching.iterate(affinity) > threshold:
-        pass
-
-    assignment = graph_matching.solution(affinity)
-
-    return assignment
-
-def get_simplex(simplices: np.ndarray, x: float, y: float) -> np.ndarray:
-    """Return the simplex (a, b, c) containing the position (x, y)."""
-
-    return simplices[0] # TODO
-
-
-def run(infile, extent: float):
-    DIMENSIONS = 2
-
-    corners = np.array(
+    return np.array(
         [
             [-extent / 2, -extent / 2],
             [-extent / 2, extent / 2],
@@ -39,97 +23,120 @@ def run(infile, extent: float):
         ]
     )
 
-    # Construct CSV reader to get coordinates from input file
-    csv_reader = csv.reader(infile)
 
-    # Read the first line of the input so the main loop has a 'previous' to compare against
-    first_line = next(csv_reader)
-    previous_positions = np.array(first_line, np.float32).reshape(DIMENSIONS, -1).T
-    previous_positions = np.concat([corners, previous_positions])
+def read_points(line, corners: np.ndarray) -> np.ndarray:
+    """Produce an array containing points extracted from a CSV reader iterator.
+    Fixed corner points for the domain boundary are also added."""
 
-    # We also need our initial triangulation
-    triangulation = scipy.spatial.Delaunay(previous_positions)
+    points = np.array(line, np.float32).reshape(DIMENSIONS, -1).T
+    return np.concat([corners, points])
 
-    figure, axis = plt.subplots()
 
-    simplices = triangulation.simplices
+def assign_particles(
+    old: np.ndarray, new: np.ndarray, epsilon: float, threshold: float
+) -> np.ndarray:
+    """Generate particle pairing between frames using the spectral graph matching method."""
 
-    # plot simplices
+    info = graph_matching.SpectralGraphMatchingInfo(old, new, epsilon)
+
+    while graph_matching.iterate(info) > threshold:
+        pass
+
+    return graph_matching.solution(info)
+
+
+def plot_frame(
+    name,
+    vertices: np.ndarray,
+    simplices: np.ndarray,
+    velocities: np.ndarray,
+) -> np.ndarray:
+    """Plot a frame for visualization of the algorithm."""
+
+    QUIVER_SCALE = 0.5
+    LOOP_INDICES = [0, 1, 2, 0]
+
+    # Create figure
+    figure, axes = plt.subplots()
+
+    # Plot simplices
     for simplex in simplices:
-        xs = previous_positions[simplex[[0, 1, 2, 0]], 0]
-        ys = previous_positions[simplex[[0, 1, 2, 0]], 1]
-        axis.plot(xs, ys, c="grey", zorder=1)
+        indices = simplex[LOOP_INDICES]
+        axes.plot(vertices[indices, 0], vertices[indices, 1], c="grey", zorder=1)
 
-    axis.scatter(previous_positions[:, 0], previous_positions[:, 1])
+    # Plot vertex positions
+    axes.scatter(vertices[:, 0], vertices[:, 1])
 
-    figure.savefig("figures/0.png")
+    # Plot velocities of each vertex
+    axes.quiver(
+        vertices[:, 0],
+        vertices[:, 1],
+        velocities[:, 0],
+        velocities[:, 1],
+        scale=QUIVER_SCALE,
+        zorder=-1,
+    )
+
+    # Save and close the figure
+    figure.savefig(f"figures/{name}.svg")
     plt.close(figure)
 
-    gridpoints = np.linspace(-extent / 2, extent / 2)
 
-    # Iterate all the remaining lines in the CSV
+def iterate(
+    index: int, simplices: np.ndarray, previous: np.ndarray, points: np.ndarray
+):
+    # Determine assignments
+    EPSILON = 1.0
+    COST_THRESHOLD = 1e-4
+    assignments = assign_particles(previous, points, EPSILON, COST_THRESHOLD)
+
+    # Update simplexes too newly reassigned particle indices
+    simplices = assignments[simplices]
+
+    # Caculate velocities at each vertex (backwards finite difference)
+    velocities = np.zeros(points.shape)
+    for i in range(previous.shape[0]):
+        j = assignments[i]
+        velocities[j, :] = points[j, :] - previous[i, :]
+
+    # Save figure for visualization
+    plot_frame(index, points, simplices, velocities)
+
+    return simplices
+
+
+def run(infile, extent: float):
+    # Corner points used to fix the boundaries of the domain
+    corners = generate_corner_points(extent)
+
+    # Create iterator over lines of input from an external CSV file. See the readme for how this
+    # is structured
+    csv_reader = csv.reader(infile)
+
+    # Assemble a set of points to process containing the next line of data from the CSV as well as
+    # the corner points
+    previous_positions = read_points(next(csv_reader), corners)
+
+    # Calculate triangulation of the first frame
+    triangulation = scipy.spatial.Delaunay(previous_positions)
+    simplices = triangulation.simplices
+
+    # Iterate over the remaining frames, generating data for each
     for index, line in enumerate(csv_reader, start=1):
-        # Get positions from the CSV input
-        positions = np.array(line, np.float32).reshape(DIMENSIONS, -1).T
-        positions = np.concat([corners, positions])
-
-        # Determine assignments
-        EPSILON = 1.0
-        COST_THRESHOLD = 1e-4
-        assignments = calculate_particle_assignments(
-            previous_positions, positions, EPSILON, COST_THRESHOLD
-        )
-
-        # plot simplices
-        figure, axis = plt.subplots()
-
-        simplices = assignments[simplices]
-
-        for indices in simplices:
-            xs = positions[indices[[0, 1, 2, 0]], 0]
-            ys = positions[indices[[0, 1, 2, 0]], 1]
-            axis.plot(xs, ys, c="grey", zorder=1)
-
-        velocities = np.zeros(positions.shape)
-        for i in range(previous_positions.shape[0]):
-            j = assignments[i]
-            velocities[j, :] = positions[j, :] - previous_positions[i, :]
-
-        axis.quiver(positions[:, 0], positions[:, 1], velocities[:, 0], velocities[:, 1], scale=0.5, zorder=-1)
-
-        # interpolated_velocities_x = np.ones((50, 50))
-        # interpolated_velocities_y = np.ones((50, 50))
-
-        # for i in range(50):
-        #     for j in range(50):
-        #         x = gridpoints[i]
-        #         y = gridpoints[j]
-
-        #         # identify simplex
-        #         (a, b, c) = todo()
-
-        #         # barycentric interpolation
-        #         value = scipy.interpolate.barycentric_interpolate(xcoords, ycoords, )
-
-        #         interpolated_velocities_x[i, j] = vx
-        #         interpolated_velocities_y[i, j] = vy
-
-        # axis.quiver(
-        #     gridpoints, gridpoints, interpolated_velocities_x, interpolated_velocities_y
-        # )
-
-
-        axis.scatter(positions[:, 0], positions[:, 1])
-        figure.savefig(f"figures/{index}.png")
-        plt.close(figure)
-
+        positions = read_points(line, corners)
+        simplices = iterate(index, simplices, previous_positions, positions)
         positions, previous_positions = previous_positions, positions
 
 
 if __name__ == "__main__":
     from argparse import ArgumentParser
 
+    # Construct CLI argument parser
     parser = ArgumentParser(description="Particle pairing example")
     parser.add_argument("--extent", required=True, type=float)
+
+    # Parse CLI argument
     arguments = parser.parse_args()
+
+    # Pass stdin and arguments to program
     run(sys.stdin, arguments.extent)
