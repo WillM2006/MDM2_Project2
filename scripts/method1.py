@@ -2,6 +2,7 @@
 
 import graph_matching
 import scipy.spatial
+import scipy.interpolate
 import numpy as np
 import csv
 import sys
@@ -19,6 +20,11 @@ def calculate_particle_assignments(
     assignment = graph_matching.solution(affinity)
 
     return assignment
+
+def get_simplex(simplices: np.ndarray, x: float, y: float) -> np.ndarray:
+    """Return the simplex (a, b, c) containing the position (x, y)."""
+
+    return simplices[0] # TODO
 
 
 def run(infile, extent: float):
@@ -59,6 +65,8 @@ def run(infile, extent: float):
     figure.savefig("figures/0.png")
     plt.close(figure)
 
+    gridpoints = np.linspace(-extent / 2, extent / 2)
+
     # Iterate all the remaining lines in the CSV
     for index, line in enumerate(csv_reader, start=1):
         # Get positions from the CSV input
@@ -81,6 +89,35 @@ def run(infile, extent: float):
             xs = positions[indices[[0, 1, 2, 0]], 0]
             ys = positions[indices[[0, 1, 2, 0]], 1]
             axis.plot(xs, ys, c="grey", zorder=1)
+
+        velocities = np.zeros(positions.shape)
+        for i in range(previous_positions.shape[0]):
+            j = assignments[i]
+            velocities[j, :] = positions[j, :] - previous_positions[i, :]
+
+        axis.quiver(positions[:, 0], positions[:, 1], velocities[:, 0], velocities[:, 1], scale=0.5, zorder=-1)
+
+        # interpolated_velocities_x = np.ones((50, 50))
+        # interpolated_velocities_y = np.ones((50, 50))
+
+        # for i in range(50):
+        #     for j in range(50):
+        #         x = gridpoints[i]
+        #         y = gridpoints[j]
+
+        #         # identify simplex
+        #         (a, b, c) = todo()
+
+        #         # barycentric interpolation
+        #         value = scipy.interpolate.barycentric_interpolate(xcoords, ycoords, )
+
+        #         interpolated_velocities_x[i, j] = vx
+        #         interpolated_velocities_y[i, j] = vy
+
+        # axis.quiver(
+        #     gridpoints, gridpoints, interpolated_velocities_x, interpolated_velocities_y
+        # )
+
 
         axis.scatter(positions[:, 0], positions[:, 1])
         figure.savefig(f"figures/{index}.png")
