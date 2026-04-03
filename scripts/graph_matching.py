@@ -1,6 +1,7 @@
 #!/bin/env python
 
 import numpy as np
+from numba import jit
 
 
 class SpectralGraphMatchingInfo:
@@ -40,14 +41,21 @@ def iterate(data: SpectralGraphMatchingInfo) -> float:
 def solution(data: SpectralGraphMatchingInfo) -> np.ndarray:
     """Generate and return a dicretized assignment matrix."""
 
-    p = data.p.reshape((data.n1, data.n2))
+    return _solution(data.p, data.n1, data.n2)
 
-    discrete = np.zeros(data.n1, dtype=np.int32)
-    for i in range(data.n1):
+
+@jit(nopython=True, parallel=True)
+def _solution(p: np.ndarray, n1: int, n2: int) -> np.ndarray:
+    p = p.reshape((n1, n2))
+
+    discrete = np.zeros(n1, dtype=np.int32)
+    for i in range(n1):
         discrete[i] = np.argmax(p[i, :])
 
     return discrete
 
+
+@jit(nopython=True, parallel=True)
 def _affinity_matrix(old: np.ndarray, new: np.ndarray, epsilon: float) -> np.ndarray:
     (n_old, _) = old.shape
     (n_new, _) = new.shape
@@ -76,6 +84,6 @@ def _affinity_matrix(old: np.ndarray, new: np.ndarray, epsilon: float) -> np.nda
     return np.exp(-np.square(affinities / epsilon))
 
 
-
+@jit(nopython=True, parallel=True)
 def _normalize(p: np.ndarray):
     return p / np.sqrt(np.sum(np.square(p)))
