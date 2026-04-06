@@ -4,6 +4,7 @@ import csv
 import graph_matching
 import matplotlib.pyplot as plt
 import numpy as np
+from pathlib import Path
 import scipy.spatial
 import sys
 
@@ -50,7 +51,7 @@ def plot_frame(
     vertices: np.ndarray,
     simplices: np.ndarray,
     velocities: np.ndarray,
-) -> np.ndarray:
+):
     """Plot a frame for visualization of the algorithm."""
 
     QUIVER_SCALE = 0.5
@@ -77,8 +78,11 @@ def plot_frame(
         zorder=-1,
     )
 
-    # Save and close the figure
-    figure.savefig(f"figures/{name}.svg")
+    # Save and close the figure, creating the `figures/` directory if not existing
+    figures_dir = Path("figures")
+    if not figures_dir.exists():
+        figures_dir.mkdir()
+    figure.savefig(figures_dir / f"{name}.svg")
     plt.close(figure)
 
 
