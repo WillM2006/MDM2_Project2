@@ -5,6 +5,7 @@
 generates timeseries of simulated particles in a 2D flow
 each line is a subsequence frame
 lines contain 2D coordinates like: x0,y0,x1,y1,...xN,yN
+these are shuffled to prevent trivial assignments
 
 ## scripts/visualize.py
 
@@ -12,7 +13,17 @@ convert example data into a visualization using matplotlib animation
 
 ## scripts/method1.py
 
-in-progress implementation of method1 for velocity field extraction
+progress implementation of method1 for velocity field extraction
+
+generates a large CSV containing one line for each processed frame
+each line is `points,x0,y0,x1,y1,...xN,yN`
+where `points` is the number of points along a single axis (so the line will contain `points * points * 2` subsequent values)
+
+also generates a sequence of SVG frames for visualisation
+
+## scripts/evaluate.py
+
+evaluate output produced by `scripts/method1.py`
 
 # Notes
 
@@ -33,5 +44,6 @@ in-progress implementation of method1 for velocity field extraction
 
 ### Process generated data
 
-Run `scripts/method1.py --extent 6.5 < data.csv` to process the generated data.
+Run `scripts/method1.py --extent 6.5 --edgepoints 7 < data.csv` to process the generated data.
 This extracts coherent velocity information from the data and writes visualizations to a `figures/` directory.
+The number of edgepoints should be roughly the square-root of the number of points. (maybe?)
