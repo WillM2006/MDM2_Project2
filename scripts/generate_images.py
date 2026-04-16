@@ -9,6 +9,7 @@ import scipy.ndimage
 from PIL import Image
 import csv
 
+
 def generate_image(size: int, extent: float, positions: np.ndarray, blobsize: float):
     shape = (size, size)
     image = np.zeros(shape, dtype=np.uint8)
@@ -23,6 +24,7 @@ def generate_image(size: int, extent: float, positions: np.ndarray, blobsize: fl
     filtered = scipy.ndimage.gaussian_filter(image, blobsize)
     return filtered
 
+
 def run(infile, outfile, size: int, extent: float, blobsize: float):
     csv_reader = csv.reader(infile)
 
@@ -32,6 +34,7 @@ def run(infile, outfile, size: int, extent: float, blobsize: float):
         filename = f"images/{index+1}.png"
         pil_image = Image.fromarray(image)
         pil_image.save(filename)
+
 
 if __name__ == "__main__":
     from argparse import ArgumentParser
