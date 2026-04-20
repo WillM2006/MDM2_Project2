@@ -2,7 +2,7 @@ import numpy as np
 import graph_matching as gm
 from scipy.optimize import least_squares
 
-def place_centres(max_spacing=0.94, domain_min=(-3, -3), domain_max=(3,3), buffer=True):
+def place_centres(max_spacing=3, domain_min=(-3, -3), domain_max=(3,3), buffer=True):
     '''
     Place RBF centres on a uniform grid across the domain. 
     Spacing of centres must not exceed the maximum: 0.3 x flow length scale. 
@@ -29,7 +29,7 @@ def place_centres(max_spacing=0.94, domain_min=(-3, -3), domain_max=(3,3), buffe
         x_f=[xs[-1]+spacing_x]
         xs=np.concatenate((x_0, xs, x_f))
 
-        y_0=[ys[0]-spacing_y]
+        y_0=[ys[0]-2*spacing_y]
         y_f=[ys[-1]+spacing_y]
         ys=np.concatenate((y_0, ys, y_f))
 
@@ -43,38 +43,65 @@ def build_phi(particle_positions, centres, sigmas):
     phi = np.exp(-num / denom)
     return phi
 
-def best_widths_and_weights(particle_positions, velocities, centres, sigma_bounds=(0.1, 5.0)):
-    N=len(centres)
-    sigma0=0.5*np.ones(N)
-    b0=np.ones(N)
-    parameters0=np.concatenate([sigma0, b0, sigma0, b0])
+'''
+def best_widths_and_weights(particle_positions, velocities, centres):
+    N = len(centres)
+    params0 = np.concatenate([0.5*np.ones(N), np.ones(N)])  # [sigma, b]
 
-    def residuals(parameters):
-        sigma_u=parameters[0:N]
-        b_u=parameters[N:2*N]
-        sigma_w=parameters[2*N:3*N]
-        b_w=parameters[3*N:4*N]
-
-
-        residual_u = build_phi(particle_positions, centres, sigma_u) @ b_u - velocities[:, 0]
-        residual_w = build_phi(particle_positions, centres, sigma_w) @ b_w - velocities[:, 1]
-    
-        residuals = np.concatenate([residual_u, residual_w])
-
+    def get_residuals(target_velocity):
+        def residuals(params):
+            sigma = params[0:N]
+            b     = params[N:2*N]
+            return build_phi(particle_positions, centres, sigma) @ b - target_velocity
         return residuals
 
-    lower = np.concatenate([0.1*np.ones(N), -np.inf*np.ones(N), 0.1*np.ones(N), -np.inf*np.ones(N)])
-    upper = np.concatenate([5.0*np.ones(N), np.inf*np.ones(N), 5.0*np.ones(N), np.inf*np.ones(N)])
+    result_u = least_squares(get_residuals(velocities[:, 0]), params0)
+    result_w = least_squares(get_residuals(velocities[:, 1]), params0)
 
-    best_parameters = least_squares(residuals, parameters0, bounds=(lower, upper))
+    sigma_u, b_u = result_u.x[0:N], result_u.x[N:2*N]
+    sigma_w, b_w = result_w.x[0:N], result_w.x[N:2*N]
 
-    sigma_u = best_parameters.x[0:N]
-    b_u     = best_parameters.x[N:2*N]
-    sigma_w = best_parameters.x[2*N:3*N]
-    b_w     = best_parameters.x[3*N:4*N]
-
-    best_widths = np.vstack([sigma_u, sigma_w])
+    best_widths  = np.vstack([sigma_u, sigma_w])
     best_weights = np.vstack([b_u, b_w])
+
+    return best_widths, best_weights
+'''
+def best_widths_and_weights(particle_positions, velocities, centres):
+    N = len(centres)
+    params0 = np.concatenate([0.5*np.ones(N), np.zeros(N)])
+
+    # precompute squared distances once — same for u and w
+    diff = particle_positions[:, None, :] - centres[None, :, :]
+    r2 = np.sum(diff**2, axis=-1)   # (M, N)
+
+    def make_fns(target_velocity):
+        def residuals(params):
+            sigma = params[0:N]
+            b     = params[N:2*N]
+            phi = np.exp(-r2 / (2 * sigma[None, :]**2))
+            return phi @ b - target_velocity
+
+        def jacobian(params):
+            sigma = params[0:N]
+            b     = params[N:2*N]
+            phi = np.exp(-r2 / (2 * sigma[None, :]**2))
+            dr_dsigma = b[None, :] * phi * r2 / sigma[None, :]**3
+            dr_db     = phi
+            return np.hstack([dr_dsigma, dr_db])   # (M, 2N)
+
+        return residuals, jacobian
+
+    res_u, jac_u = make_fns(velocities[:, 0])
+    res_w, jac_w = make_fns(velocities[:, 1])
+
+    result_u = least_squares(res_u, params0, jac=jac_u, ftol=1e-4, xtol=1e-4)
+    result_w = least_squares(res_w, params0, jac=jac_w, ftol=1e-4, xtol=1e-4)
+
+    sigma_u, b_u = result_u.x[0:N], result_u.x[N:2*N]
+    sigma_w, b_w = result_w.x[0:N], result_w.x[N:2*N]
+
+    best_widths=np.vstack([sigma_u, sigma_w])
+    best_weights=np.vstack([b_u, b_w])
 
     return best_widths, best_weights
     
