@@ -1,6 +1,9 @@
 # approach2
 # Dual-mesh (Voronoi) approach for particle-velocity inference.
 
+""" python generate_example_data.py --count 50 --frames 60 --extent 6 --seed 12345 --dissipation 0.5 \
+  | python approach2_test3.py --extent 6.5 --edgepoints 7 """
+
 import numpy as np
 import scipy.spatial
 import scipy.optimize
