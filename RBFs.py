@@ -2,11 +2,9 @@ import numpy as np
 import graph_matching as gm
 from scipy.optimize import least_squares
 
-def place_centres(max_spacing=3, domain_min=(-3, -3), domain_max=(3,3), buffer=True):
+def place_centres(max_spacing=2, domain_min=(-3, -3), domain_max=(3,3), buffer=True):
     '''
     Place RBF centres on a uniform grid across the domain. 
-    Spacing of centres must not exceed the maximum: 0.3 x flow length scale. 
-    For example field this is a max spacing of 0.94
     Optionally, include a buffer layer of centres on all 4 sides
     '''
     x_min=domain_min[0]
