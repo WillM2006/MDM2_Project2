@@ -14,6 +14,7 @@ def run(filein, outpath: str, fps: int, extent: float):
     positions = np.array(input_line, dtype=np.float32).reshape(2, -1)
 
     figure, axes = plt.subplots()
+    axes.set_aspect(1.0)
     axes.set_xlim(-extent / 2, extent / 2)
     axes.set_ylim(-extent / 2, extent / 2)
     scatter = axes.scatter(positions[0, :], positions[1, :], s=5)

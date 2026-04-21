@@ -1,14 +1,11 @@
 #!/bin/env python
 
 import csv
-import graph_matching
-import matplotlib.pyplot as plt
-import numpy as np
 from pathlib import Path
-import scipy.spatial
-import scipy.interpolate
-import scipy.optimize
-import sys
+import numpy as np
+from scipy.optimize import linear_sum_assignment
+from scipy.spatial import Delaunay
+from scipy.interpolate import LinearNDInterpolator
 from numba import jit
 from typing import Optional
 
@@ -59,83 +56,10 @@ def generate_assignment_cost_matrix(old: np.ndarray, new: np.ndarray) -> np.ndar
 def assign_particles(old: np.ndarray, new: np.ndarray) -> np.ndarray:
     """Generate particle pairing between frames using the spectral graph matching method."""
 
-    USE_SPECTRAL_METHOD = False
+    cost_matrix = generate_assignment_cost_matrix(old, new)
+    _, columns = linear_sum_assignment(cost_matrix)
 
-    if USE_SPECTRAL_METHOD:
-        EPSILON = 1.0
-        COST_THRESHOLD = 1e-4
-
-        info = graph_matching.SpectralGraphMatchingInfo(old, new, EPSILON)
-
-        while graph_matching.iterate(info) > COST_THRESHOLD:
-            pass
-
-        return graph_matching.solution(info)
-    else:
-        cost_matrix = generate_assignment_cost_matrix(old, new)
-        _, columns = scipy.optimize.linear_sum_assignment(cost_matrix)
-        return columns
-
-
-def plot_frame(
-    name,
-    vertices: np.ndarray,
-    simplices: np.ndarray,
-    velocities: np.ndarray,
-    gridpoints: np.ndarray,
-    interpolated_velocities: np.ndarray,
-    frames_dir: Path,
-):
-    """Plot a frame for visualization of the algorithm."""
-
-    QUIVER_SCALE = 0.5
-    LOOP_INDICES = [0, 1, 2, 0]
-
-    # Create figure
-    figure, axes = plt.subplots()
-
-    # Plot simplices
-    for simplex in simplices:
-        indices = simplex[LOOP_INDICES]
-        axes.plot(vertices[indices, 0], vertices[indices, 1], c="grey", zorder=0)
-
-    # Plot vertex positions
-    axes.scatter(vertices[:, 0], vertices[:, 1], s=18, zorder=2)
-
-    # Plot velocities of each vertex
-    # axes.quiver(
-    #     vertices[:, 0],
-    #     vertices[:, 1],
-    #     velocities[:, 0],
-    #     velocities[:, 1],
-    #     scale=QUIVER_SCALE,
-    #     zorder=1,
-    # )
-
-    # Plot velocities of each vertex
-    axes.quiver(
-        gridpoints,
-        gridpoints,
-        interpolated_velocities[:, :, 0],
-        interpolated_velocities[:, :, 1],
-        scale=QUIVER_SCALE * 4,
-        zorder=3,
-    )
-
-    if not frames_dir.exists():
-        frames_dir.mkdir()
-    figure.savefig(frames_dir / f"{name}.svg")
-    plt.close(figure)
-
-
-def barycentric_interpolate(
-    vertices: np.ndarray, values: np.ndarray, p: np.ndarray
-) -> np.ndarray:
-    """Given 3 `vertices` of a triangle each with associated `values`, find the value at `p` using
-    barycentric interpolation."""
-
-    interpolate = scipy.interpolate.LinearNDInterpolator(vertices, values)
-    return interpolate(p)
+    return columns
 
 
 @jit(nopython=True)
@@ -177,7 +101,38 @@ def find_containing_simplex(
     return None
 
 
-def run(infile, outfile, frames_dir: Path, extent: float, edgepoints: int):
+def barycentric_interpolate(
+    vertices: np.ndarray, values: np.ndarray, p: np.ndarray
+) -> np.ndarray:
+    """Given 3 `vertices` of a triangle each with associated `values`, find the value at `p` using
+    barycentric interpolation."""
+
+    interpolate = LinearNDInterpolator(vertices, values)
+    return interpolate(p)
+
+
+def save_frame(
+    output: Path, xs: np.ndarray, ys: np.ndarray, us: np.ndarray, vs: np.ndarray
+):
+    with open(output) as file:
+        writer = csv.writer(file)
+        writer.writerow(["x", "y", "u", "v"])
+
+        for xi, x in enumerate(xs):
+            for yi, y in enumerate(ys):
+                u = us[xi, yi]
+                v = vs[xi, yi]
+                writer.writerow([x, y, u, v])
+
+
+def main(infile, outdir: Path, extent: float, edgepoints: int, gridsize: int):
+    # if the output directory doesn't exist, create it
+    outdir.mkdir(exist_ok=True)
+
+    # Points of a grid at which velocities will be interpolated
+    gridpoints = np.linspace(-extent / 2, extent / 2, gridsize)
+    interpolated_velocities = np.zeros((gridsize, gridsize, DIMENSIONS))
+
     # Corner points used to fix the boundaries of the domain
     corners = generate_corner_points(extent, edgepoints)
 
@@ -185,8 +140,8 @@ def run(infile, outfile, frames_dir: Path, extent: float, edgepoints: int):
     # is structured
     csv_reader = csv.reader(infile)
 
-    # Assemble a set of points to process containing the first line of data from the CSV as well as
-    # the corner points
+    # Assemble a set of points to process, containing the first line of data from the CSV as well
+    # as the corner points
     previous_positions = read_points(next(csv_reader), corners)
 
     # Iterate over the remaining frames, generating data for each
@@ -198,9 +153,9 @@ def run(infile, outfile, frames_dir: Path, extent: float, edgepoints: int):
 
         # Update simplices to newly reassigned particle indices
         # generate fresh triangulation of previous frame
-        triangulation = scipy.spatial.Delaunay(previous_positions)
-        simplices = triangulation.simplices
-        simplices = assignments[simplices]
+        triangulation = Delaunay(previous_positions)
+        old_simplices = triangulation.simplices
+        new_simplices = assignments[old_simplices]
 
         # Caculate velocities at each vertex (backwards finite difference)
         velocities = np.zeros(positions.shape)
@@ -208,17 +163,14 @@ def run(infile, outfile, frames_dir: Path, extent: float, edgepoints: int):
             j = assignments[i]
             velocities[j, :] = positions[j, :] - previous_positions[i, :]
 
-        GRIDSIZE = 50
-        gridpoints = np.linspace(-extent / 2, extent / 2, GRIDSIZE)
-        interpolated_velocities = np.zeros((GRIDSIZE, GRIDSIZE, DIMENSIONS))
-        for y in range(GRIDSIZE):
-            for x in range(GRIDSIZE):
+        for y in range(gridsize):
+            for x in range(gridsize):
                 position = np.array([gridpoints[x], gridpoints[y]])
 
-                simplex_id = find_containing_simplex(position, positions, simplices)
+                simplex_id = find_containing_simplex(position, positions, new_simplices)
                 assert simplex_id is not None
 
-                simplex = simplices[simplex_id]
+                simplex = new_simplices[simplex_id]
                 vertices = positions[simplex]
                 vels = velocities[simplex]
 
@@ -227,14 +179,13 @@ def run(infile, outfile, frames_dir: Path, extent: float, edgepoints: int):
                 )
 
         # Save figure for visualization
-        plot_frame(
-            index,
-            positions,
-            simplices,
-            velocities,
+        output_frame_name = outdir / f"{index}.csv"
+        save_frame(
+            output_frame_name,
             gridpoints,
-            interpolated_velocities,
-            frames_dir,
+            gridpoints,
+            interpolated_velocities[:, :, 0],
+            interpolated_velocities[:, :, 1],
         )
 
         # swap previous and current positions for next iteration
@@ -243,36 +194,43 @@ def run(infile, outfile, frames_dir: Path, extent: float, edgepoints: int):
 
 if __name__ == "__main__":
     from argparse import ArgumentParser
+    import sys
 
-    # Construct CLI argument parser
-    parser = ArgumentParser(description="Particle pairing example")
+    parser = ArgumentParser(
+        description="Extract velocity information from a CSV of particle positions"
+    )
+    parser.add_argument("--infile", type=Path, required=True, help="The file to read CSV data from")
     parser.add_argument(
         "--extent",
         required=True,
-        help="the axis-aligned length of the domain",
         type=float,
+        help="maximum extent of data from the origin in either axis",
     )
     parser.add_argument(
         "--edgepoints",
         required=True,
-        help="the number of fixed nodes along the boundary of the domain",
         type=int,
+        help="the number of fixed points placed around the boundary",
     )
     parser.add_argument(
-        "--frames-dir",
+        "--gridsize",
         required=True,
-        help="the directory to write rendered frames into",
-        type=Path,
+        type=int,
+        help="the density of points to sample velocity at along both axes",
+    )
+    parser.add_argument(
+        "--outdir",
+        required=True,
+        help="The directory to write extracted velocity information to",
     )
 
-    # Parse CLI argument
     arguments = parser.parse_args()
+    infile = open(arguments.infile, "r")
 
-    # Pass stdin, stdout and arguments to program
-    run(
-        sys.stdin,
-        sys.stdout,
-        arguments.frames_dir,
+    main(
+        infile,
+        arguments.outdir,
         arguments.extent,
         arguments.edgepoints,
+        arguments.gridsize,
     )

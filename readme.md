@@ -44,6 +44,6 @@ evaluate output produced by `scripts/method1.py`
 
 ### Process generated data
 
-Run `scripts/method1.py --extent 6.5 --edgepoints 7 < data.csv` to process the generated data.
+Run `scripts/method.py --extent 6.5 --edgepoints 7 < data.csv` to process the generated data.
 This extracts coherent velocity information from the data and writes visualizations to a `figures/` directory.
 The number of edgepoints should be roughly the square-root of the number of points. (maybe?)

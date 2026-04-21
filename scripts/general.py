@@ -50,11 +50,6 @@ def calculate_initial_affinity_matrix(
     return np.exp(-costs / e2)
 
 
-def triangulate(positions: np.ndarray) -> np.ndarray:
-    triangulation = scipy.spatial.Delaunay(positions)
-    return triangulation.simplices
-
-
 def assign_particles(cost_matrix: np.ndarray) -> np.ndarray:
     _, columns = scipy.optimize.linear_sum_assignment(cost_matrix)
     return columns
@@ -75,15 +70,15 @@ def calculate_velocities(
 
 
 def calculate_mass_error(simplices, positions, velocities):
-    pass
+    penalties = np.zeros(())
 
 
 def calculate_momentum_error(simplices, positions, velocities):
-    pass
+    penalties = np.zeros(())
 
 
 def calculate_energy_error(simplices, positions, velocities):
-    pass
+    penalties = np.zeros(())
 
 
 def run(infile, extent: float, edgepoints: int):
