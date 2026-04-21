@@ -2,11 +2,17 @@
 # !/bin/env python
 
 """
+To run:
 python generate_example_data.py --count 50 --frames 60 --extent 6 --seed 12345 --dissipation 0.5 \
   | python approach2_test3.py --extent 6.5 --edgepoints 7
 
+For the plot:
+python generate_example_data.py --count 50 --frames 1 --extent 6 --seed 12345 --dissipation 0.5 \
+  | python approach2_test3.py --extent 6.5 --edgepoints 7 --frames-dir frames --timestep 1.5
+  
+
 Conservation score formulas
-All three scores are evaluated *per particle* so they can be mapped back
+All three scores are evaluated 'per particle' so they can be mapped back
 directly onto the (n_particles × n_particles) affinity matrix.
 
 Mass (incompressibility):
@@ -50,7 +56,9 @@ ENERGY_EPSILON = 1e-8     # avoid divide-by-zero in energy score
 
 # Boundary / corner points
 def generate_corner_points(extent: float, edgepoints: int) -> np.ndarray:
-    """Generate fixed no-slip points around the domain boundary."""
+    # Generate fixed no-slip points around the domain boundary
+    # These points carry zero velocity and anchor the triangulation
+    # at the edges of the domain, preventing triangles there
     pts = np.linspace(-extent / 2, extent / 2, num=edgepoints + 1, endpoint=False)
     pts_flip = pts[::-1]
     lo = np.full(edgepoints + 1, -extent / 2)
@@ -65,19 +73,19 @@ def generate_corner_points(extent: float, edgepoints: int) -> np.ndarray:
 
 
 def read_points(line, corners: np.ndarray) -> np.ndarray:
-    """Parse one CSV line into (N, 2) positions, prepending the fixed corners."""
+    # Parse one CSV row of flattened (x, z) coordinates into an (N, 2) array
+    # and prepend the fixed boundary corner points
     pts = np.array(line, np.float32).reshape(DIMENSIONS, -1).T
     return np.concatenate([corners, pts], axis=0)
 
 
-# Affinity matrix
+# Affinity matrix and assignment (Hungarian algorithm)
 def initial_affinity_matrix(old: np.ndarray, new: np.ndarray,
                              epsilon: float) -> np.ndarray:
     """
+    Build a Gaussian affinity matrix between two frames of particle positions
     A[i,j] = exp(-||old_i - new_j||^2 / eps^2)
-
-    This is a Gaussian kernel: large when the two points are close,
-    small when they are far apart.
+    Large when particles are close, small when far apart
     """
     # Use broadcasting to compute all pairwise squared distances at once.
     diff = old[:, np.newaxis, :] - new[np.newaxis, :, :]   # (N_old, N_new, 2)
@@ -87,24 +95,23 @@ def initial_affinity_matrix(old: np.ndarray, new: np.ndarray,
 
 def assign_from_affinity(affinity: np.ndarray) -> np.ndarray:
     """
-    Convert an affinity (similarity) matrix to a cost matrix and solve
-    the linear sum assignment (Hungarian algorithm).
-
-    Returns `columns`: columns[i] = j means particle i is matched to j.
+    Solving the linear sum assignment problem (Hungarian algorithm) on the
+    affinity matrix to find the optimal one-to-one particle matching.
+    Returns `assignment` where assignment[i] = j means old particle i
+    is matched to new particle j.
     """
     cost = -affinity          # maximise affinity  ≡  minimise negative affinity
     _, columns = scipy.optimize.linear_sum_assignment(cost)
     return columns
 
 
-# Velocity from assignment
+# Velocities
 def compute_velocities(old: np.ndarray, new: np.ndarray,
                        assignment: np.ndarray) -> np.ndarray:
-    """
-    v[j] = new[j] - old[i]   where assignment[i] = j.
+    # computing per particle velocities from a frame pair and an assignment vector
+    # v[j] = new[j] - old[i]   where assignment[i] = j
+    # Returns an (N, 2) array of velocity vectors indexed in the new frame
 
-    Returns an (N, 2) array of velocity vectors indexed in the *new* frame.
-    """
     N = new.shape[0]
     velocities = np.zeros((N, 2), dtype=np.float64)
     for i, j in enumerate(assignment):
@@ -112,7 +119,7 @@ def compute_velocities(old: np.ndarray, new: np.ndarray,
     return velocities
 
 
-# Delaunay triangulation + Voronoi dual
+# Delaunay triangulation and Voronoi dual areas
 def triangulate(positions: np.ndarray) -> scipy.spatial.Delaunay:
     return scipy.spatial.Delaunay(positions)
 
@@ -120,11 +127,12 @@ def triangulate(positions: np.ndarray) -> scipy.spatial.Delaunay:
 def voronoi_areas(positions: np.ndarray,
                   tri: scipy.spatial.Delaunay) -> np.ndarray:
     """
-    Compute the approximate Voronoi cell area for each point via the
-    dual of the Delaunay triangulation.
+    Computing the approximate Voronoi cell area for each point by using
+    the dual of the Delaunay triangulation
 
-    Strategy: each triangle contributes 1/3 of its area to each of its
-    three vertices (a robust approximation that works for all triangulations).
+    Each triangle contributes one third of its area to each of its
+    three vertices. This is the difference from Approach 1, each particle
+    now owns a region of space, giving a physically meaningful cell mass
     """
     N = positions.shape[0]
     areas = np.zeros(N, dtype=np.float64)
@@ -136,20 +144,17 @@ def voronoi_areas(positions: np.ndarray,
         areas[i] += triangle_area / 3.0
         areas[j] += triangle_area / 3.0
         areas[k] += triangle_area / 3.0
-    # Guard against degenerate zero-area cells
+    # Guarding against degenerate zero-area cells
     areas = np.where(areas < 1e-15, 1e-15, areas)
     return areas
 
 
-# Conservation scores (all per-particle)
+# Helper geometry (defining them before the score functions that call them)
 def barycentric_gradient(vertices: np.ndarray) -> Tuple[np.ndarray, float]:
     """
-    Return the 3 barycentric gradient vectors ∇λ_k  (each is a 2-vector)
-    and the signed area of the triangle.
-
-    Given triangle vertices A, B, C (each a 2-vector),
-    the gradients are the rows of A^{-1} (the last row dropped since
-    λ3 = 1 - λ1 - λ2, but we return all three for convenience).
+    Returning the 3 barycentric gradient vectors ∇λ_k  (each is a 2-vector)
+    and the signed area of the triangle, used to compute ∇·u analytically
+    on the piecewise-linear Delaunay mesh. 
     """
     x1, y1 = vertices[0]
     x2, y2 = vertices[1]
@@ -158,7 +163,6 @@ def barycentric_gradient(vertices: np.ndarray) -> Tuple[np.ndarray, float]:
     if abs(det) < 1e-15:
         return np.zeros((3, 2)), 0.0
 
-    area = det / 2.0
     inv_det = 1.0 / det
 
     grad = np.array([
@@ -166,9 +170,23 @@ def barycentric_gradient(vertices: np.ndarray) -> Tuple[np.ndarray, float]:
         [(y3 - y1) * inv_det,  (x1 - x3) * inv_det],
         [(y1 - y2) * inv_det,  (x2 - x1) * inv_det],
     ])
-    return grad, area
+    return grad, det / 2.0
 
 
+def circumcentre(verts: np.ndarray) -> Optional[np.ndarray]:
+    # Circumcentre of a triangle, Returns None if degenerate
+    ax, ay = verts[0]
+    bx, by = verts[1]
+    cx, cy = verts[2]
+    D = 2.0 * (ax*(by-cy) + bx*(cy-ay) + cx*(ay-by))
+    if abs(D) < 1e-15:
+        return None
+    ux = ((ax**2+ay**2)*(by-cy) + (bx**2+by**2)*(cy-ay) + (cx**2+cy**2)*(ay-by)) / D
+    uy = ((ax**2+ay**2)*(cx-bx) + (bx**2+by**2)*(ax-cx) + (cx**2+cy**2)*(bx-ax)) / D
+    return np.array([ux, uy])
+
+
+# Conservation scores (all per-particle)
 def score_mass(positions: np.ndarray, velocities: np.ndarray,
                tri: scipy.spatial.Delaunay,
                voronoi_areas_arr: np.ndarray) -> np.ndarray:
@@ -177,7 +195,7 @@ def score_mass(positions: np.ndarray, velocities: np.ndarray,
         S_mass_p = |∇·u|_p
 
     ∇·u is constant within each Delaunay triangle (piecewise-linear field).
-    We accumulate an area-weighted average over all triangles sharing vertex p.
+    Accumulating an area-weighted average over all triangles sharing vertex p.
 
     For incompressible flow: ∇·u = 0 everywhere → score should be near 0.
     """
@@ -202,7 +220,7 @@ def score_mass(positions: np.ndarray, velocities: np.ndarray,
             divergence_sum[idx] += div * w
             weight_sum[idx]     += w
 
-    # Avoid zero-weight nodes (isolated boundary points)
+    # Avoiding zero-weight nodes (isolated boundary points)
     mask = weight_sum > 1e-15
     score = np.zeros(N)
     score[mask] = np.abs(divergence_sum[mask] / weight_sum[mask])
@@ -216,7 +234,6 @@ def score_momentum(positions: np.ndarray, velocities: np.ndarray,
     Per-particle momentum-conservation score (net flux through Voronoi cell):
         S_mom_p = |Σ_{faces} (u_face · n̂) * |face|| / |V_p|
 
-    Dual-mesh interpretation:
       Each Delaunay edge (shared by two triangles) corresponds to a Voronoi
       face.  The Voronoi face runs between the circumcentres of the two
       triangles.  The velocity on the shared edge is approximated as the
@@ -228,7 +245,7 @@ def score_momentum(positions: np.ndarray, velocities: np.ndarray,
     N = positions.shape[0]
     flux_accum = np.zeros(N, dtype=np.float64)
 
-    # Build edge → triangle adjacency from the Delaunay structure
+    # Build edge, triangle adjacency from the Delaunay structure
     # tri.neighbors[t, k] = neighbour triangle opposite vertex k of triangle t.
     simplices  = tri.simplices        # (T, 3)
     neighbors  = tri.neighbors        # (T, 3)  -1 if no neighbour
@@ -255,10 +272,10 @@ def score_momentum(positions: np.ndarray, velocities: np.ndarray,
                 continue
 
             # Normal to the Voronoi edge (perpendicular, pointing "outward"
-            # relative to the Delaunay edge between the two shared vertices).
+            # relative to the Delaunay edge between the two shared vertices)
             normal = np.array([-voronoi_edge[1], voronoi_edge[0]]) / face_len
 
-            # Shared Delaunay edge: vertices are those NOT at local position k
+            # Shared Delaunay edge, vertices are those NOT at local position k
             shared = [simplex[m] for m in range(3) if m != local_k]
             p, q   = shared[0], shared[1]
             u_face = 0.5 * (velocities[p] + velocities[q])
@@ -273,19 +290,6 @@ def score_momentum(positions: np.ndarray, velocities: np.ndarray,
     return score
 
 
-def circumcentre(verts: np.ndarray) -> Optional[np.ndarray]:
-    """Circumcentre of a triangle.  Returns None if degenerate."""
-    ax, ay = verts[0]
-    bx, by = verts[1]
-    cx, cy = verts[2]
-    D = 2.0 * (ax*(by-cy) + bx*(cy-ay) + cx*(ay-by))
-    if abs(D) < 1e-15:
-        return None
-    ux = ((ax**2+ay**2)*(by-cy) + (bx**2+by**2)*(cy-ay) + (cx**2+cy**2)*(ay-by)) / D
-    uy = ((ax**2+ay**2)*(cx-bx) + (bx**2+by**2)*(ax-cx) + (cx**2+cy**2)*(bx-ax)) / D
-    return np.array([ux, uy])
-
-
 def score_energy(positions: np.ndarray, velocities: np.ndarray,
                  voronoi_areas_arr: np.ndarray,
                  k: int = K_NEIGHBOURS) -> np.ndarray:
@@ -295,7 +299,7 @@ def score_energy(positions: np.ndarray, velocities: np.ndarray,
 
     v̄_p is the area-weighted mean velocity of the k nearest neighbours
     of particle p.  A particle whose velocity departs significantly from
-    its neighbours is likely mis-matched.
+    its neighbours is probably mis-matched
     """
     N = positions.shape[0]
     k_actual = min(k, N - 1)
@@ -319,9 +323,9 @@ def score_energy(positions: np.ndarray, velocities: np.ndarray,
     return score
 
 
-# Score → affinity correction
+# Affinity correction and combined score
 def normalise_score(score: np.ndarray) -> np.ndarray:
-    """Normalise a per-particle score vector to [0, 1]."""
+    # Normalise a per-particle score vector to [0, 1]
     s_max = score.max()
     if s_max < 1e-15:
         return score
@@ -337,19 +341,19 @@ def affinity_correction(affinity: np.ndarray,
                         w_energy: float,
                         correction_strength: float = 0.1) -> np.ndarray:
     """
-    Reduce the affinity of particle assignments that violate conservation laws.
+    Reducing the affinity of particle assignments that violate conservation laws
 
-    For each row i (old particle), the plausibility of matching it to column j
-    (new particle) is penalised by the conservation scores at particle j.
+    For each row i (old particle), the probability of matching it to column j
+    (new particle) is penalised by the conservation scores at particle j
 
     The total per-particle penalty is:
-        penalty_j = w_mass * S_mass_j + w_mom * S_mom_j + w_energy * S_energy_j
+    penalty_j = w_mass * S_mass_j + w_mom * S_mom_j + w_energy * S_energy_j
 
     The affinity correction is:
-        A[i, j]  →  A[i, j] * exp(-correction_strength * penalty_j)
+    A[i, j]  →  A[i, j] * exp(-correction_strength * penalty_j)
 
-    Using a multiplicative (soft) correction avoids driving any affinity
-    to exactly zero and keeps the matrix well-conditioned.
+    Using a multiplicative correction avoids driving any affinity
+    to exactly zero
     """
     # Normalise each score independently to [0, 1]
     nm = normalise_score(score_mass_arr)
@@ -358,17 +362,40 @@ def affinity_correction(affinity: np.ndarray,
 
     penalty = w_mass * nm + w_mom * nmo + w_energy * ne  # shape (N_new,)
 
-    # Broadcast: apply column-wise penalty (each column = a new-frame particle)
+    # Broadcast, apply column-wise penalty (each column = a new-frame particle)
     correction = np.exp(-correction_strength * penalty[np.newaxis, :])
     return affinity * correction
 
 
-# Barycentric velocity interpolation
+def combined_score(s_mass=None, s_mom=None, s_energy=None, weights=None):
+    """
+    Weighted combination of per-particle conservation scores
+ 
+    On the first call (weights=None) each score is normalised by its own
+    mean so all three terms start contributing equally. The normalisation
+    weights are returned so they can be passed back on subsequent calls.
+    """
+    available = {}
+    if s_mass   is not None: available['mass']     = s_mass
+    if s_mom    is not None: available['momentum'] = s_mom
+    if s_energy is not None: available['energy']   = s_energy
+ 
+    if weights is None:
+        weights = {k: 1.0 / (np.mean(v) + 1e-12) for k, v in available.items()}
+ 
+    score = np.zeros_like(next(iter(available.values())))
+    for k, v in available.items():
+        score += weights[k] * v
+ 
+    return score / len(available), weights
+
+
+# Velocity interpolation
 def interpolate_velocity_field(positions: np.ndarray,
                                velocities: np.ndarray,
                                tri: scipy.spatial.Delaunay,
                                gridpoints: np.ndarray) -> np.ndarray:
-    """
+    """""
     Interpolate per-particle velocities onto a regular grid using the
     piecewise-linear (barycentric) interpolant defined by the Delaunay mesh.
 
@@ -394,36 +421,46 @@ def interpolate_velocity_field(positions: np.ndarray,
 def plot_frame(name, positions, tri, velocities, gridpoints,
                interp_vel, voronoi_areas_arr, score, frames_dir: Path):
     LOOP = [0, 1, 2, 0]
-    fig, axes = plt.subplots(1, 2, figsize=(14, 6))
+    fig, ax = plt.subplots(1, 1, figsize=(7, 6))
+    ax.set_title("Voronoi dual-mesh + velocity field")
 
-    # --- Left: mesh + velocities ---
-    ax = axes[0]
-    ax.set_title("Delaunay mesh + velocity field")
+    # Draw Delaunay triangles (faint background)
     for simplex in tri.simplices:
         idx = simplex[LOOP]
         ax.plot(positions[idx, 0], positions[idx, 1], c="lightgrey", lw=0.5, zorder=0)
-    ax.scatter(positions[:, 0], positions[:, 1], s=12, zorder=2)
+
+    # Draw Voronoi dual edges (circumcentre to circumcentre for each shared edge)
+    simplices = tri.simplices
+    neighbors = tri.neighbors
+    for t_idx, simplex in enumerate(simplices):
+        cc_t = circumcentre(positions[simplex])
+        if cc_t is None:
+            continue
+        for local_k in range(3):
+            t_nbr = neighbors[t_idx, local_k]
+            if t_nbr == -1 or t_nbr < t_idx:
+                continue
+            cc_nbr = circumcentre(positions[simplices[t_nbr]])
+            if cc_nbr is None:
+                continue
+            ax.plot([cc_t[0], cc_nbr[0]], [cc_t[1], cc_nbr[1]],
+                    c="mediumpurple", lw=0.8, alpha=0.7, zorder=1)
+
+    ax.scatter(positions[:, 0], positions[:, 1], s=12, zorder=3)
     ax.quiver(positions[:, 0], positions[:, 1],
               velocities[:, 0], velocities[:, 1],
-              color="steelblue", scale=1.0, width=0.003, zorder=1)
+              color="steelblue", scale=1.0, width=0.003, zorder=2)
     # Grid velocities
     ax.quiver(gridpoints, gridpoints,
               interp_vel[:, :, 0], interp_vel[:, :, 1],
               color="tomato", alpha=0.5, scale=4.0, width=0.002, zorder=-1)
     ax.set_aspect("equal")
 
-    # --- Right: conservation score heatmap ---
-    ax2 = axes[1]
-    ax2.set_title("Conservation score (per particle)")
-    sc = ax2.scatter(positions[:, 0], positions[:, 1],
-                     c=score, cmap="hot_r", s=20, zorder=2)
-    plt.colorbar(sc, ax=ax2, label="score")
-    ax2.set_aspect("equal")
-
     frames_dir.mkdir(parents=True, exist_ok=True)
     fig.tight_layout()
     fig.savefig(frames_dir / f"{name}.svg")
     plt.close(fig)
+
 
 
 # Main processing loop
@@ -433,10 +470,11 @@ def run(infile, frames_dir: Optional[Path],
         correction_strength: float = 0.15,
         max_iter: int = 20,
         convergence_tol: float = 1e-4,
-        gridsize: int = 40):
+        gridsize: int = 40,
+        dt: float = 1.0):
     """
-    Full pipeline: read frames, match particles, score conservation laws,
-    refine affinity matrix, repeat, then interpolate velocity field.
+    read frames, match particles, score conservation laws,
+    refine affinity matrix, repeat, then interpolate velocity field
     """
     corners = generate_corner_points(extent, edgepoints)
     csv_reader = csv.reader(infile)
@@ -451,14 +489,14 @@ def run(infile, frames_dir: Optional[Path],
 
         print(f"[Frame {frame_index}]  {N_old} → {N_new} particles", file=sys.stderr)
 
-        # ---- Initial affinity matrix ----------------------------------------
+        # Initial affinity matrix 
         affinity = initial_affinity_matrix(prev_positions, curr_positions, epsilon)
 
-        # ---- Triangulation on current frame (fixed throughout refinement) ----
+        # triangulation on current frame (fixed throughout refinement)
         tri = triangulate(curr_positions)
         voronoi_areas_arr = voronoi_areas(curr_positions, tri)
 
-        # ---- Determine initial weights using first-iteration scores ----------
+        # determine initial weights using first-iteration scores
         assignment    = assign_from_affinity(affinity)
         velocities    = compute_velocities(prev_positions, curr_positions, assignment)
 
@@ -466,13 +504,13 @@ def run(infile, frames_dir: Optional[Path],
         s_mom    = score_momentum(curr_positions, velocities, tri, voronoi_areas_arr)
         s_energy = score_energy(curr_positions, velocities, voronoi_areas_arr)
 
-        # Weights are reciprocals of initial scores (so all start equal at 1)
+        # Weights are reciprocals of initial scores, so all start equal at 1
         # (guard against zero initial scores)
         w_mass   = 1.0 / (s_mass.mean()   + 1e-12)
         w_mom    = 1.0 / (s_mom.mean()    + 1e-12)
         w_energy = 1.0 / (s_energy.mean() + 1e-12)
 
-        # ---- Iterative refinement -------------------------------------------
+        # iterative refinement 
         prev_assignment = None
         for iteration in range(max_iter):
             # Apply conservation-law corrections to affinity
@@ -485,7 +523,7 @@ def run(infile, frames_dir: Optional[Path],
             # Solve assignment
             new_assignment = assign_from_affinity(affinity_corrected)
 
-            # Check convergence: did the assignment change?
+            # Check convergence; did the assignment change
             if prev_assignment is not None:
                 n_changed = np.sum(new_assignment != prev_assignment)
                 frac_changed = n_changed / len(new_assignment)
@@ -503,31 +541,30 @@ def run(infile, frames_dir: Optional[Path],
             s_mom    = score_momentum(curr_positions, velocities, tri, voronoi_areas_arr)
             s_energy = score_energy(curr_positions, velocities, voronoi_areas_arr)
 
-            # Update affinity matrix using corrections (in-place on the *original*
-            # affinities so corrections accumulate multiplicatively)
+            # Update affinity matrix using corrections
             affinity = affinity_correction(
                 affinity, s_mass, s_mom, s_energy,
                 w_mass, w_mom, w_energy,
                 correction_strength=correction_strength
             )
 
-        # ---- Final velocities from converged assignment ---------------------
+        # Final velocities from converged assignment
         velocities = compute_velocities(prev_positions, curr_positions, assignment)
 
-        # ---- Combined plausibility score (lower = better) ------------------
+        # Combined plausibility score (lower = better) 
         combined_score = (w_mass   * normalise_score(s_mass) +
                           w_mom    * normalise_score(s_mom) +
                           w_energy * normalise_score(s_energy))
         print(f"  Final combined score: {combined_score.mean():.5f} "
               f"(mean over all particles)", file=sys.stderr)
 
-        # ---- Velocity interpolation onto grid -------------------------------
+        # velocity interpolation onto grid
         gridpoints = np.linspace(-extent / 2, extent / 2, gridsize)
         interp_vel = interpolate_velocity_field(
             curr_positions, velocities, tri, gridpoints
         )
 
-        # ---- Optional visualisation -----------------------------------------
+        # a visualisation
         if frames_dir is not None:
             plot_frame(
                 frame_index,
@@ -547,7 +584,7 @@ if __name__ == "__main__":
 
     parser = ArgumentParser(
         description=(
-            "Method 2: Voronoi dual-mesh particle matching with conservation-law "
+            "Approach 2: Voronoi dual-mesh particle matching with conservation-law "
             "score feedback.  Reads CSV frames from stdin."
         )
     )
@@ -571,7 +608,10 @@ if __name__ == "__main__":
     parser.add_argument("--gridsize", default=40,
                         help="resolution of interpolated velocity grid (default 40)",
                         type=int)
-
+    parser.add_argument("--timestep", default=1.0,
+                        help="duration between frames used to scale velocities (default 1.0)",
+                        type=float)
+    
     args = parser.parse_args()
 
     run(
@@ -583,4 +623,5 @@ if __name__ == "__main__":
         correction_strength=args.correction_strength,
         max_iter=args.max_iter,
         gridsize=args.gridsize,
+        dt=args.timestep,
     )
