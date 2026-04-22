@@ -10,7 +10,7 @@ For the plot:
 python generate_example_data.py --count 50 --frames 1 --extent 6 --seed 12345 --dissipation 0.5 \
   | python approach2_test3.py --extent 6.5 --edgepoints 7 --frames-dir frames --timestep 1.5
   
-
+"""
 
 import csv
 import sys
