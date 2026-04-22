@@ -11,27 +11,6 @@ python generate_example_data.py --count 50 --frames 1 --extent 6 --seed 12345 --
   | python approach2_test3.py --extent 6.5 --edgepoints 7 --frames-dir frames --timestep 1.5
   
 
-Conservation score formulas
-All three scores are evaluated 'per particle' so they can be mapped back
-directly onto the (n_particles × n_particles) affinity matrix.
-
-Mass (incompressibility):
-    S_mass_p  = |∇·u(x_p)|
-    where u is the piecewise-linear velocity field on the Delaunay mesh.
-    For triangle T with barycentric coordinates, the divergence is constant:
-        ∇·u = Σ_k  u_k · ∇λ_k
-    and is evaluated at each particle from the triangles that share it (area-weighted mean).
-
-Momentum (cell-face flux):
-    For each Voronoi cell V_p (dual of particle p):
-        S_mom_p = |Σ_{faces} (u_face · n̂) * |face|| / |V_p|
-    This is the net flux of momentum (i.e. velocity) through the cell boundary.
-    For an incompressible flow this should be zero.
-
-Energy (local KE smoothness):
-    S_energy_p = |v_p - v̄_p|² / (|v̄_p|² + δ)
-    where v̄_p is the area-weighted mean velocity of the k nearest neighbours.
-"""
 
 import csv
 import sys
