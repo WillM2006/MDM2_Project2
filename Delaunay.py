@@ -24,6 +24,8 @@ def get_points(df, frameidx):
     return np.column_stack((x, y))
 
 def C_IJ(df, frame1idx, frame2idx):
+    ''' Calculate the cross-correlation coefficient between all the triangles in 2 frames (higher values are better)'''
+
     def inRadius(point1, point2, R):
         r = np.sqrt((point1[0]-point2[0])**2
                     +(point1[1]-point2[1])**2)
@@ -31,22 +33,61 @@ def C_IJ(df, frame1idx, frame2idx):
             return True
         else:
             return False
+        
+    def translate_triangle(tri_pts, centroid1):
+        # translate first
+        A, B, C = tri_pts - centroid1
+
+        def angle(p, q, r):
+            v1 = q - p
+            v2 = r - p
+            return np.arccos(np.dot(v1, v2) / (np.linalg.norm(v1) * np.linalg.norm(v2)))
+
+        angles = [
+            angle(A, B, C),
+            angle(B, A, C),
+            angle(C, A, B)
+        ]
+
+        # find vertex opposite largest angle
+        idx = np.argmax(angles)
+        large_vertex = tri_pts[idx]
+        other_vertexs = [tri_pts[(idx+1)%3], tri_pts[(idx+2)%3]]
+
+        v1 = other_vertexs[0] - large_vertex
+        v2 = other_vertexs[1] - large_vertex
+
+        v1n = v1 / np.linalg.norm(v1)
+        v2n = v2 / np.linalg.norm(v2)
+
+        direction = v1n + v2n
+
+        theta = np.arctan2(direction[1], direction[0])
+
+        R = np.array([
+            [np.cos(-theta), -np.sin(-theta)],
+            [np.sin(-theta),  np.cos(-theta)]
+        ])
+
+        translated = (tri_pts - large_vertex) @ R.T
+
+        return translated
+
 
     def tri_area(tri_pts):
         a, b, c = tri_pts
         return 0.5 * abs(np.linalg.det([b - a, c - a]))
 
-    def tri_overlap_area(tri1_pts, tri2_pts):
-        poly1 = Polygon(tri1_pts)
-        poly2 = Polygon(tri2_pts)
+    def tri_overlap_area(tri_pts1, tri_pts2, centroid1, centroid2):
+        translated_pts1 = translate_triangle(tri_pts1, centroid1)
+        translated_pts2 = translate_triangle(tri_pts2, centroid2)
+        poly1 = Polygon(translated_pts1)
+        poly2 = Polygon(translated_pts2)
         return poly1.intersection(poly2).area
 
     points1 = get_points(df, frame1idx)
     points2 = get_points(df, frame2idx)
 
-
-    R = 2 * np.mean(np.linalg.norm(points1 - np.mean(points1, axis=0), axis=1)) / np.sqrt(len(points1))
-    
     if len(points1) < 3 or len(points2) < 3:
         raise ValueError("Not enough points for Delaunay triangulation")
 
@@ -56,20 +97,19 @@ def C_IJ(df, frame1idx, frame2idx):
     centroids1 = np.mean(tri1.points[tri1.simplices], axis=1)
     centroids2 = np.mean(tri2.points[tri2.simplices], axis=1)
 
-
     C = np.zeros((len(tri1.simplices), len(tri2.simplices)))
 
     for i, tri_i in enumerate(tri1.simplices):
-        centre_i = centroids1[i]
-        
+        centroid_i = centroids1[i]
+
         for j, tri_j in enumerate(tri2.simplices):
-            centre_j = centroids2[j]
-            if inRadius(centre_i, centre_j, R):
+            centroid_j = centroids2[j]
+
+            if inRadius(centroid_i, centroid_j, R):
                 tri_i_pts = tri1.points[tri_i]
                 tri_j_pts = tri2.points[tri_j]
-                C[i, j] = tri_overlap_area(tri_i_pts, tri_j_pts) / np.sqrt(tri_area(tri_i_pts) * tri_area(tri_j_pts))
+                C[i, j] = tri_overlap_area(tri_i_pts, tri_j_pts, centroid_i, centroid_j) / np.sqrt(tri_area(tri_i_pts) * tri_area(tri_j_pts))
 
-    
     return C, tri1, tri2, centroids1, centroids2
 
 def pair(C, centroids1, centroids2, max_dist=0.02):
